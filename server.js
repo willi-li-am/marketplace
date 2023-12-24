@@ -6,6 +6,7 @@ const bcrypt = require("bcrypt")
 const crypto = require("crypto")
 const Schema = mongoose.Schema
 const cookieParser = require("cookie-parser")
+const cors = require('cors')
 
 mongoose.connect("mongodb+srv://trollermaner:" + process.env.KEY + "@cluster0.9pogjfp.mongodb.net/?retryWrites=true&w=majority")
 
@@ -23,7 +24,8 @@ const itemSchema = new Schema({
     stock: {type: Number, required: true},
     description: {type: String, required: true},
     image: {type: String, required: true},
-    sellerId: {type: [String], require: true}
+    sellerId: {type: String, require: true},
+    date: {type: Date, required: true}
 })
 
 const accountSchema = new Schema({
@@ -41,10 +43,16 @@ const app = Express()
 
 app.use(Express.urlencoded({extended: false}))
 app.use(cookieParser())
+app.use(cors({origin: 'http://localhost:3000'}))
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', 'http://localhost:3000'); // Replace with your frontend domain
+    res.header('Access-Control-Allow-Credentials', 'true');
+    next();
+});
 
 app.get("/", async (req, res) => {
     try{
-        if (!req.cookies.sessionId) return res.json({loggedIn: false})
+        if (!req.cookies.sessionId || req.cookies.sessionId === "") return res.json({loggedIn: false})
         const sessionId = req.cookies.sessionId
         let account = await Accounts.findOne({sessionId: sessionId})
 
@@ -64,6 +72,16 @@ app.get("/list/transaction", async (req, res) => {
     }
     catch (error) {
         res.send(error).status(500)
+    }
+})
+
+app.get("/list/items", async (req, res) => {
+    try{
+        const itemList = await Items.find().limit(50).sort({date: -1})
+        res.json(itemList)
+    }
+    catch(err){
+        res.send(err).status(500)
     }
 })
 
@@ -98,10 +116,25 @@ app.post("/login", async (req, res) => {
 
         const savedAccount = await account.save()
         console.log(savedAccount)
-        res.cookie("sessionId", sessionId, {maxAge: 2592000 * 1000}).send("Logged In")
+        res.cookie("sessionId", sessionId, {maxAge: 2592000 * 1000}).send({cookie: sessionId})
     }
     catch{
         return res.status(500).json({error: "An error has occured"})
+    }
+})
+
+app.get("/logout", async (req, res) => {
+    try{
+        if(!req.cookies.sessionId || req.cookies.sessionId === "") return res.status(500).json({error: "Not logged in"})
+        const sessionId = req.cookies.sessionId 
+        let account = await Accounts.findOne({sessionId: sessionId})
+        account.sessionId = ""
+        let updatedAccount = await account.save()
+        console.log(updatedAccount)
+        res.json({message: "Successfuly logged out"})
+    }
+    catch{
+        res.status(500).json({error: "An error has occured"})
     }
 })
 
@@ -110,7 +143,7 @@ app.post("/new/order", async (req, res) => {
         if (!req.body.items) return res.status(500).json({error: "Missing items"})
         if (!req.body.amounts) return res.status(500).json({error: "Missing quantity"})
         if (!req.body.address) return res.status(500).json({error: "Missing address"})
-        if (!req.cookies.sessionId) return res.status(500).json({error: "Missing session Id"})
+        if (!req.cookies.sessionId || req.cookies.sessionId === "") return res.status(500).json({error: "Missing session Id"})
         
         let items = req.body.items.split(",")
         let amounts = req.body.amounts.split(",")
@@ -222,7 +255,7 @@ app.post("/new/account", async (req, res) => {
         let account = new Accounts({password: hashedPassword, sessionId: sessionId, email: email})
         const savedAccount = await account.save()
         console.log(savedAccount)
-        res.cookie("sessionId", sessionId, {maxAge: 2592000 * 1000}).send("account successfully created")
+        res.cookie("sessionId", sessionId, {maxAge: 2592000 * 1000}).send({cookie: sessionId})
     }
     catch(err){
         res.status(500).json({error: "An error has occured"})
@@ -246,12 +279,13 @@ app.post("/new/item", async (req, res) => {
         let stock = req.body.stock
         let image = req.body.image
         let description = req.body.description
-        
+        const date = new Date()
+        console.log(req.cookies)
         let sellerId
         await Accounts.findOne({sessionId: req.cookies.sessionId})
             .then((data) => sellerId = data.id)
 
-        let item = new Items({title: title, price: price, stock: stock, description: description, image: image, sellerId: sellerId})
+        let item = new Items({title: title, price: price, stock: stock, description: description, image: image, sellerId: sellerId, date: date})
         
         try{
             const savedItem = await item.save()
@@ -262,30 +296,143 @@ app.post("/new/item", async (req, res) => {
             res.status(500).json({error: "poopie"})
         }
     }
-    catch{
+    catch(err){
+        console.log(err)
         res.status(500).json({error: "An error has occured"})
     }
 })
 
-app.get("/list/items", async (req, res) => {
+app.post("/owner/item", async (req, res) => {
     try{
-        let searchTerm = ""
-        if (req.query.search) {
-            searchTerm = req.query.search
+        if (!req.body.productId) return res.status(400).json({ error: "No product given" });
+        if (!req.cookies.sessionId || req.cookies.sessionId === undefined) {
+            return res.status(401).json({ error: "Not logged in" });
         }
-        const itemList = await Items.find({ title: { $regex: searchTerm, $options: 'i' }})
-        res.send(itemList)
-    }
+    
+        const sessionId = req.cookies.sessionId
+    
+        const account = await Accounts.findOne({sessionId: sessionId})
+        const product = await Items.findById(req.body.productId)
+    
+        if (account === null) return res.status(404).json({error: "Not logged in"})
+        if (product === null) return res.status(404).json({error: "Product does not exist"})
+
+        if (account.id === product.sellerId){
+            return res.send(true)
+        }
+        return res.send(false)
+    }   
     catch{
-        return res.status(500).json({error: "No items available"})
+        res.status(500).json({error:"an error has occured"})
+    }
+})
+
+app.post("/update/item", async (req, res) => {
+    try {
+        if (!req.body.title && !req.body.price && !req.body.stock && !req.body.image && !req.body.description) {
+            return res.status(400).json({ error: "No updates made" });
+        }
+        if (!req.body.productId) {
+            return res.status(400).json({ error: "No product to be updated" });
+        }
+        if (!req.cookies.sessionId || req.cookies.sessionId === undefined) {
+            return res.status(401).json({ error: "Not logged in" });
+        }
+    
+        const sessionId = req.cookies.sessionId;
+        const productId = req.body.productId;
+    
+        const product = await Items.findById(productId);
+    
+        if (product === null) {
+            return res.status(404).json({ error: "This product does not exist" });
+        }
+    
+        // validate account
+        const account = await Accounts.findOne({ sessionId: sessionId });
+    
+        if (account === null) {
+            return res.status(401).json({ error: "This account does not exist" });
+        }
+    
+        console.log(account.id);
+        console.log(product.sellerId);
+    
+        if (account.id === product.sellerId) {
+            if (req.body.title) {
+                product.title = req.body.title;
+            }
+            if (req.body.price) {
+                product.price = req.body.price;
+            }
+            if (req.body.stock) {
+                product.stock = req.body.stock;
+            }
+            if (req.body.image) {
+                product.image = req.body.image;
+            }
+            if (req.body.description) {
+                product.description = req.body.description;
+            }
+    
+            console.log(product);
+    
+            const updatedProduct = await product.save();
+    
+            console.log(updatedProduct);
+    
+            return res.json({ message: "Product successfully updated" });
+        } else {
+            return res.status(401).json({ error: "You do not own this product" });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+    
+})
+
+app.get("/list/listings", async (req, res) => {
+    try{
+        if (!req.cookies.sessionId) return res.status(500).json({error: "Not signed in"})
+        const sessionId = req.cookies.sessionId
+        
+        await Accounts.findOne({sessionId: sessionId})
+            .then(async account => {
+                if (account === null) return res.status(500).json({error: "Not signed in"})
+                const sellerId = account.id
+                await Items.find({sellerId: sellerId}).sort({"date": -1})
+                    .then(itemList => {
+                        if (itemList.length === 0) return res.json([])
+                        return res.json(itemList)
+                    })
+            })
+    }
+    catch(err){
+        console.log(err)
+        res.status(500).json({error: "An error has occured"})
+    }
+})
+
+app.get("/item", async (req, res) => {
+    try{
+        const productId = req.query.productId
+        await Items.findById(productId)
+            .then((data) => {
+                if (data === null) return res.status(500).json({error: "This product does not exist"})
+                res.json(data)
+            })
+    }
+    catch(err){
+        console.log(err)
+        res.status(500).json({error: "An error has occured"})
     }
 })
 
 app.get("/delete", async (req, res) => {
     try{
         await Transaction.deleteMany({})
-        await Accounts.deleteMany({})
         await Items.deleteMany({})
+        await Accounts.deleteMany({})
         res.send("Successfully deleted the whole DB")
     }
     catch{
