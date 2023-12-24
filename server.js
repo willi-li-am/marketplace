@@ -43,9 +43,9 @@ const app = Express()
 
 app.use(Express.urlencoded({extended: false}))
 app.use(cookieParser())
-app.use(cors({origin: 'http://localhost:3000'}))
+app.use(cors({origin: 'https://marketplace-frontened-lcmop1p43-trollermaner.vercel.app/'}))
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:3000'); // Replace with your frontend domain
+    res.header('Access-Control-Allow-Origin', 'https://marketplace-frontened-lcmop1p43-trollermaner.vercel.app/'); // Replace with your frontend domain
     res.header('Access-Control-Allow-Credentials', 'true');
     next();
 });
